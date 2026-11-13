@@ -1,7 +1,7 @@
 """Tiered rating of metered workflow runs, in cents."""
 
 # (runs up to, price per run in cents); the last tier is open-ended.
-TIERS = [(10_000, 2.0), (100_000, 1.5), (None, 1.0)]
+TIERS = [(10_000, 2.0), (100_000, 1.5), (None, 0.8)]
 
 
 def rate(runs: int) -> float:
