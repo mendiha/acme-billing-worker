@@ -1,0 +1,98 @@
+version: 2.1
+
+parameters:
+  deploy_message:
+    type: string
+    default: "Routine release"
+  nightly_rating:
+    type: boolean
+    default: false
+
+executors:
+  py:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small
+
+jobs:
+  lint:
+    executor: py
+    steps:
+      - checkout
+      - run:
+          name: Compile every module
+          command: python -m compileall -q acme_billing
+  unit-tests:
+    executor: py
+    steps:
+      - checkout
+      - run: pip install -q pytest
+      - run:
+          name: Run unit tests
+          command: |
+            mkdir -p test-results
+            python -m pytest tests/unit --junitxml=test-results/unit.xml -v
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+          destination: junit
+
+  build-release:
+    executor: py
+    steps:
+      - checkout
+      - run:
+          name: Build release bundle
+          command: |
+            mkdir -p dist
+            tar czf dist/acme-billing-worker-${CIRCLE_SHA1:0:7}.tar.gz acme_billing
+            printf '{"service": "acme-billing-worker", "sha": "%s", "build": "%s"}\n' "$CIRCLE_SHA1" "$CIRCLE_BUILD_NUM" > dist/release.json
+      - store_artifacts:
+          path: dist
+          destination: release
+  deploy:
+    executor: py
+    parameters:
+      environment:
+        type: string
+    steps:
+      - run:
+          name: Deploy acme-billing-worker
+          command: |
+            echo "Deploying acme-billing-worker ${CIRCLE_SHA1:0:7} to << parameters.environment >> in $DEPLOY_REGION"
+            echo "Release note: << pipeline.parameters.deploy_message >>"
+
+workflows:
+  build-test-deploy:
+    jobs:
+      - lint
+      - unit-tests
+      - build-release:
+          requires: [lint, unit-tests]
+      - deploy:
+          name: deploy-staging
+          environment: staging
+          context: acme-staging
+          requires: [build-release]
+          filters:
+            branches:
+              only: main
+      - hold-production:
+          type: approval
+          requires: [deploy-staging]
+          filters:
+            branches:
+              only: main
+      - deploy:
+          name: deploy-production
+          environment: production
+          context: [acme-production, acme-release-notify]
+          requires: [hold-production]
+          filters:
+            branches:
+              only: main
+  nightly-rating:
+    when: << pipeline.parameters.nightly_rating >>
+    jobs:
+      - unit-tests
